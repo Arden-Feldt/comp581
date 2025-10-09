@@ -1,5 +1,5 @@
 # Arden Feldt 740566506
-# Ryder Klien 730559358
+# Ryder Klein 730559358
 
 #!/usr/bin/env pybricks-micropython
 from pybricks.hubs import EV3Brick
