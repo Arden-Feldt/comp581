@@ -1,7 +1,7 @@
+#!/usr/bin/env pybricks-micropython
 # Arden Feldt 740566506
 # Ryder Klein 730559358
 
-#!/usr/bin/env pybricks-micropython
 from pybricks.hubs import EV3Brick
 from pybricks.ev3devices import (Motor, TouchSensor, ColorSensor,
                                  InfraredSensor, UltrasonicSensor, GyroSensor)
@@ -30,7 +30,6 @@ ultrasonic = UltrasonicSensor(Port.S2)
 WHEELRADIUS = 2.8
 GOATED_SPEED = 180
 taskStarted = False
-previously_pressed = False
 # taskFinished = False
 # Possible states: OBJ1, OBJ2, OBJ31, OBJ32, FIN
 currentTask = "OBJ1"
@@ -52,15 +51,11 @@ def goNext(newObjective):
     ev3.screen.print(currentTask)
 
 def centerButtonPressed():
-    global previously_pressed
-    pressed = Button.CENTER in ev3.buttons.pressed()
-    if pressed and not previously_pressed:
-        previously_pressed = True
-        return True
-    elif not pressed:
-        previously_pressed = False
-    return False
-#    return (Button.CENTER in ev3.buttons.pressed())
+    pressed = (Button.CENTER in ev3.buttons.pressed())
+    if (pressed):
+        wait(100)
+    return pressed
+
 def getUSDist():
     US_OFFSET = 45
     return ultrasonic.distance() - US_OFFSET
@@ -84,7 +79,7 @@ while (True):
             motorLeft.run(GOATED_SPEED)
             motorRight.run(GOATED_SPEED)
             taskStarted = True
-        if (getUSDist() < (TARGET_DISTANCE * 10)):
+        elif (getUSDist() < (TARGET_DISTANCE * 10)):
             motorLeft.hold()
             motorRight.hold()
             ev3.screen.print(getUSDist())
@@ -94,7 +89,7 @@ while (True):
             motorLeft.run(GOATED_SPEED)
             motorRight.run(GOATED_SPEED)
             taskStarted = True
-        if (touch.pressed()):
+        elif (touch.pressed()):
             motorLeft.hold()
             motorRight.hold()
             goNext("OBJ32")
