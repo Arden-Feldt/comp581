@@ -29,10 +29,10 @@ ultrasonic = UltrasonicSensor(Port.S2)
 # 2.8
 WHEELRADIUS = 2.8
 GOATED_SPEED = 180
+
 taskStarted = False
-# taskFinished = False
-# Possible states: OBJ1, OBJ2, OBJ31, OBJ32, FIN
-currentTask = "OBJ1"
+# Possible states: APPROACH, FOLLOW, DONE
+currentTask = "APPROACH"
 ev3.screen.clear()
 ev3.screen.print(currentTask)
 
@@ -56,7 +56,7 @@ def centerButtonPressed():
         wait(100)
     return pressed
 
-def getUSDist():
+def getUsDist():
     US_OFFSET = 45
     return ultrasonic.distance() - US_OFFSET
 
@@ -64,25 +64,41 @@ def getUSDist():
 
 # Write your program here.
 while (True):
+    '''
+    Objective 1 (Detect wall): You will place your robot behind a starting line such that its
+    measuring point will be on a specific starting point (marked) on the starting line (see figure
+    below). You will then push the dark gray center button. Your robot should then move straight
+    forward (in the positive y direction on the ground). Straight ahead, at a distance of somewhere
+    between 75 and 130 cm, will be a wall that is perpendicular to the robot’s forward motion. The
+    wall will be at least 17 cm high, of unknown width, and it is bumpable and can be detected via
+    ultrasound.
+    '''
     if (currentTask == "OBJ1"):
         if (not taskStarted):
-            DISTANCE_ONE = 140
-            motorLeft.run_angle(GOATED_SPEED, getAngle(DISTANCE_ONE), then=Stop.HOLD, wait=False)
-            motorRight.run_angle(GOATED_SPEED, getAngle(DISTANCE_ONE), then=Stop.HOLD, wait=True)
-            taskStarted = True
-        #     continue
-        # if (motorLeft.speed() == 0 and motorRight.speed() == 0):
-            goNext("OBJ2")
+            if (centerButtonPressed()):
+                motorLeft.run(GOATED_SPEED)
+                motorRight.run(GOATED_SPEED)
+                taskStarted = True
+
+        # Code to actually do the thing (should not be included in block above)
+        else:
+            if (touch.pressed()):
+                motorLeft.brake()
+                motorRight.brake()
+                goNext("OBJ2")
+    '''
+    Objective 2 (Turn at wall): Once your robot is less than 30 centimeters from the wall, your
+    robot should turn right and follow the wall.
+    '''
     elif (currentTask == "OBJ2"):
         TARGET_DISTANCE = 40
-        if ((not taskStarted) and centerButtonPressed()):
-            motorLeft.run(GOATED_SPEED)
-            motorRight.run(GOATED_SPEED)
+        if (not taskStarted):
+
             taskStarted = True
-        elif (getUSDist() < (TARGET_DISTANCE * 10)):
+        elif (getUsDist() < (TARGET_DISTANCE * 10)):
             motorLeft.hold()
             motorRight.hold()
-            ev3.screen.print(getUSDist())
+            ev3.screen.print(getUsDist())
             goNext("OBJ31")
     elif (currentTask == "OBJ31"):
         if ((not taskStarted) and centerButtonPressed()):
@@ -99,10 +115,10 @@ while (True):
             motorLeft.run(-GOATED_SPEED)
             motorRight.run(-GOATED_SPEED)
             taskStarted = True
-        if (getUSDist() > (TARGET_DISTANCE * 10)):
+        if (getUsDist() > (TARGET_DISTANCE * 10)):
             motorLeft.hold()
             motorRight.hold()
-            ev3.screen.print(getUSDist())
+            ev3.screen.print(getUsDist())
             goNext("FIN")
     wait(5)
 
