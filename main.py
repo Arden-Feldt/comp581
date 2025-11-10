@@ -1,43 +1,57 @@
 #!/usr/bin/env pybricks-micropython
-# Arden Feldt 740566506
+# Arden Feldt 730566506
 # Ryder Klein 730559358
 
 from pybricks.hubs import EV3Brick
-from pybricks.ev3devices import (Motor, TouchSensor, ColorSensor,
-                                 InfraredSensor, UltrasonicSensor, GyroSensor)
-from pybricks.parameters import Port, Stop, Direction, Button, Color
-from pybricks.tools import wait, StopWatch, DataLog
-from pybricks.robotics import DriveBase
-from pybricks.media.ev3dev import SoundFile, ImageFile
+from pybricks.ev3devices import (Motor, TouchSensor, UltrasonicSensor, GyroSensor)
+from pybricks.parameters import Port, Stop, Direction, Button
+from pybricks.tools import wait
+from pybricks.media.ev3dev import Font
 
 import math
 
-# This program requires LEGO EV3 MicroPython v2.0 or higher.
-# Click "Open user guide" on the EV3 extension tab for more information.
-
-
-# Create your objects here.
+# Objects
 ev3 = EV3Brick()
+
+bigfont = Font(size=24)
+ev3.screen.set_font(bigfont)
 
 motorLeft = Motor(Port.A, Direction.COUNTERCLOCKWISE)
 motorRight = Motor(Port.B, Direction.COUNTERCLOCKWISE)
 
 touch = TouchSensor(Port.S1)
 ultrasonic = UltrasonicSensor(Port.S2)
+gyro = GyroSensor(Port.S3)
 
+# Constants
 # Wheel radius in cm
-# 2.8
-WHEELRADIUS = 2.8
-GOATED_SPEED = 180
+# 2.8 nominally, subtract 5 mm for compression
+WHEELRADIUS = 2.75
+GOATED_SPEED = 160
+WHEEL_BASE = 9
+startDistance = 30
 
+# Variables
+# Task management
 taskStarted = False
 # Possible states: APPROACH, FOLLOW, DONE
 currentTask = "APPROACH"
+
+# Dead reckoning
+x = 0
+y = 0
+theta = 0
+totalDistance = 0
+prevLeft = 0
+prevRight = 0
+prevGyro = 0
+
+lastDistance = 0
 ev3.screen.clear()
-ev3.screen.print(currentTask)
 
 def getAngle(dist):
-    ERROR = 1.04
+    # 1.4
+    ERROR = 1.0
     dist = dist * ERROR
     circum = 2 * math.pi * WHEELRADIUS
     return (dist / circum) * 360
@@ -48,7 +62,6 @@ def goNext(newObjective):
     motorRight.reset_angle(0)
     taskStarted = False
     currentTask = newObjective
-    ev3.screen.print(currentTask)
 
 def centerButtonPressed():
     pressed = (Button.CENTER in ev3.buttons.pressed())
@@ -56,70 +69,122 @@ def centerButtonPressed():
         wait(100)
     return pressed
 
-def getUsDist():
-    US_OFFSET = 45
-    return ultrasonic.distance() - US_OFFSET
+def runMotors(speedLeft, speedRight):
+    motorLeft.run(speedLeft)
+    motorRight.run(speedRight)
 
+def turnRightish(angleDeg, speed=100):
+    arcLength = math.pi * WHEEL_BASE * angleDeg / 360
+    wheelRotation = (arcLength / (2 * math.pi * WHEELRADIUS)) * 360
+    motorLeft.run_angle(speed, wheelRotation, then=Stop.HOLD, wait=False)
+    motorRight.run_angle(-speed, wheelRotation, then=Stop.HOLD, wait=True)
 
+def getUpdatedPosition(motorLeft, motorRight, gyro):
+    global x, y, theta, totalDistance, prevLeft, prevRight, prevGyro
 
-# Write your program here.
+    angleLeft = motorLeft.angle()
+    angleRight = motorRight.angle()
+    angleGyro = math.radians(gyro.angle())
+
+    # Wheel distances
+    deltaLeft = math.radians(angleLeft - prevLeft) * (WHEELRADIUS)
+    deltaRight = math.radians(angleRight - prevRight) * (WHEELRADIUS)
+    deltaAvg = (deltaLeft + deltaRight) / 2
+    totalDistance += deltaAvg
+
+    # Heading
+    deltaTheta = angleGyro - prevGyro
+    theta += deltaTheta
+
+    # x, y
+    x += deltaAvg * math.cos(theta)
+    y += deltaAvg * math.sin(theta)
+
+    # Save for next loop
+    prevLeft = angleLeft
+    prevRight = angleRight
+    prevGyro = angleGyro
+
+    return x, y, theta
+
+# Main loop
 while (True):
-    '''
-    Objective 1 (Detect wall): You will place your robot behind a starting line such that its
-    measuring point will be on a specific starting point (marked) on the starting line (see figure
-    below). You will then push the dark gray center button. Your robot should then move straight
-    forward (in the positive y direction on the ground). Straight ahead, at a distance of somewhere
-    between 75 and 130 cm, will be a wall that is perpendicular to the robot’s forward motion. The
-    wall will be at least 17 cm high, of unknown width, and it is bumpable and can be detected via
-    ultrasound.
-    '''
-    if (currentTask == "OBJ1"):
+    if (currentTask == "APPROACH"):
         if (not taskStarted):
             if (centerButtonPressed()):
-                motorLeft.run(GOATED_SPEED)
-                motorRight.run(GOATED_SPEED)
+                motorLeft.reset_angle(0)
+                motorRight.reset_angle(0)
+                runMotors(GOATED_SPEED, GOATED_SPEED)
                 taskStarted = True
-
-        # Code to actually do the thing (should not be included in block above)
         else:
             if (touch.pressed()):
-                motorLeft.brake()
-                motorRight.brake()
-                goNext("OBJ2")
-    '''
-    Objective 2 (Turn at wall): Once your robot is less than 30 centimeters from the wall, your
-    robot should turn right and follow the wall.
-    '''
-    elif (currentTask == "OBJ2"):
-        TARGET_DISTANCE = 40
-        if (not taskStarted):
+                motorLeft.hold()
+                motorRight.hold()
 
-            taskStarted = True
-        elif (getUsDist() < (TARGET_DISTANCE * 10)):
+                startDistance = ((motorLeft.angle() +  motorRight.angle()) / 2 / 360) * (2 * math.pi * WHEELRADIUS)
+                BACKTRACK = -4
+
+                motorLeft.run_angle(GOATED_SPEED, getAngle(BACKTRACK), then=Stop.HOLD, wait=False)
+                motorRight.run_angle(GOATED_SPEED, getAngle(BACKTRACK), then=Stop.HOLD, wait=True)
+
+                goNext("CIRCLE")
+    if (currentTask == "CIRCLE"):
+        # mm 
+        TARGET_DISTANCE = 150
+
+        if (not taskStarted):
+            # rotate tj and start the task
+            turnRightish(120)
             motorLeft.hold()
             motorRight.hold()
-            ev3.screen.print(getUsDist())
-            goNext("OBJ31")
-    elif (currentTask == "OBJ31"):
-        if ((not taskStarted) and centerButtonPressed()):
-            motorLeft.run(GOATED_SPEED)
-            motorRight.run(GOATED_SPEED)
+            motorLeft.reset_angle(0)
+            motorRight.reset_angle(0)
+            gyro.reset_angle(0)
+            lastDistance = 40
+            prevLeft = motorLeft.angle()
+            prevRight = motorRight.angle()
+            prevGyro = gyro.angle()
+            taskStarted = True    
+        else:
+            distance = ultrasonic.distance()
+            if(distance is None):
+                distance = lastDistance
+            error = TARGET_DISTANCE - distance
+            # Avoid freakouts by clamping error
+            # OLD: 70
+            # 2nd old: 120
+            MAX_TURN = 120
+            error = max(-MAX_TURN, min(MAX_TURN, error))
+            turn = error * 0.85
+            runMotors(GOATED_SPEED + turn, GOATED_SPEED - turn)
+            x, y, heading = getUpdatedPosition(motorLeft, motorRight, gyro)
+            ev3.screen.clear()
+            ev3.screen.draw_text(0, 0,  "x: " + str(round(x)))
+            ev3.screen.draw_text(0, 30, "y: " + str(round(y)))
+            ev3.screen.draw_text(0, 60, "theta: " + str(round((math.degrees(heading) % 360))))
+
+            if (touch.pressed()):
+                BACKTRACK = -2
+                motorLeft.run_angle(GOATED_SPEED, getAngle(BACKTRACK), then=Stop.HOLD, wait=False)
+                motorRight.run_angle(GOATED_SPEED, getAngle(BACKTRACK), then=Stop.HOLD, wait=True)
+                turnRightish(120)
+
+            if math.sqrt((x * x) + (y * y)) < 5 and totalDistance > 15:
+                goNext("DONE")
+            lastDistance = distance
+    if (currentTask == "DONE"):
+        if (not taskStarted): 
+            endDist = startDistance - (ultrasonic.distance() / 10) - 20
+            ev3.screen.clear()
+            turnRightish(120)
+            motorLeft.run_angle(GOATED_SPEED, getAngle(endDist), then=Stop.HOLD, wait=False)
+            motorRight.run_angle(GOATED_SPEED, getAngle(endDist), then=Stop.HOLD, wait=True)
+            ev3.speaker.beep()
+            ev3.speaker.set_speech_options('en', 'm1', 150, 99)
+            ev3.screen.print('9 + 10 ?')
             taskStarted = True
-        elif (touch.pressed()):
-            motorLeft.hold()
-            motorRight.hold()
-            goNext("OBJ32")
-    elif (currentTask == "OBJ32"):
-        TARGET_DISTANCE = 40
-        if ((not taskStarted)):
-            motorLeft.run(-GOATED_SPEED)
-            motorRight.run(-GOATED_SPEED)
-            taskStarted = True
-        if (getUsDist() > (TARGET_DISTANCE * 10)):
-            motorLeft.hold()
-            motorRight.hold()
-            ev3.screen.print(getUsDist())
-            goNext("FIN")
+        ev3.speaker.say('twenty one')
+        wait(750)
     wait(5)
 
     
