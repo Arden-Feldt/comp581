@@ -79,6 +79,7 @@ def runMotors(speedLeft, speedRight):
 
 def turnByDegrees(angleDeg, speed=100):
     updatePose()
+    
     startAngle = math.degrees(theta)
     targetAngle = startAngle + angleDeg
 
@@ -106,6 +107,8 @@ def turnByDegrees(angleDeg, speed=100):
 
 
 def backtrack(distance = 2.5):
+    motorLeft.hold()
+    motorRight.hold()
     wait(100)
     motorLeft.run_angle(GOATED_SPEED, getAngle(-distance), then=Stop.HOLD, wait=False)
     motorRight.run_angle(GOATED_SPEED, getAngle(-distance), then=Stop.HOLD, wait=True)
@@ -173,14 +176,6 @@ def turnTowardPoint(targetX, targetY):
     theta_d = math.degrees(desiredTheta)
     turnByDegrees(angleDeg)
     updatePose()
-
-# def facingObjectiveish(targetX, targetY):
-#     desiredTheta = math.atan2(targetY - y, targetX - x)
-#     angleError = desiredTheta - theta
-
-#     angleError = (angleError + math.pi) % (2 * math.pi) - math.pi
-
-#     return abs(math.degrees(angleError)) < 2
 
 # Algorithm
 lastHitX = 0
