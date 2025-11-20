@@ -24,38 +24,35 @@ ultrasonic = UltrasonicSensor(Port.S2)
 touch1 = TouchSensor(Port.S3)
 touch2 = TouchSensor(Port.S4)
 
-
 # Constants
 # Wheel radius in cm
 # 2.8 nominally, subtract 5 mm for compression
-WHEELRADIUS = 2.75
-GOATED_SPEED = 160
-WHEEL_BASE = 9
-STARTINGX = 50
-STARTINGY = 0
-LASTHITX = 0
-LASTHITY = 0
-# path we wanna follow : y = 1.25 * x - 62.5
+WHEELRADIUS = 2.8
+GOATED_SPEED = 300
+WHEEL_BASE = 12
+START_THETA = math.radians(90)
+START_X = 50 + 16
+START_Y = -30
+GOAL_X = 250
+GOAL_Y = 250
 
-
-# Variables
-# Task management
-taskStarted = False
-# Possible states: APPROACH, FOLLOW, DONE
-currentTask = "APPROACH"
-
+# Vars
 # Dead reckoning
-x = 0
-y = 0
-theta = 0
+x = START_X
+y = START_Y
+theta = START_THETA
 totalDistance = 0
 prevLeft = 0
 prevRight = 0
-prevGyro = 0
+prevGyro = START_THETA
 hitObject = False
 facingObjective = False
 
+# Algorithm
+lastHitX = 0
+lastHitY = 0
 lastDistance = 0
+
 ev3.screen.clear()
 
 def touchPressed():
@@ -70,13 +67,6 @@ def getAngle(dist):
     circum = 2 * math.pi * WHEELRADIUS
     return (dist / circum) * 360
 
-def goNext(newObjective):
-    global taskStarted, currentTask
-    motorLeft.reset_angle(0)
-    motorRight.reset_angle(0)
-    taskStarted = False
-    currentTask = newObjective
-
 def centerButtonPressed():
     pressed = (Button.CENTER in ev3.buttons.pressed())
     if (pressed):
@@ -87,18 +77,47 @@ def runMotors(speedLeft, speedRight):
     motorLeft.run(speedLeft)
     motorRight.run(speedRight)
 
-def turnRightish(angleDeg, speed=100):
-    arcLength = math.pi * WHEEL_BASE * angleDeg / 360
-    wheelRotation = (arcLength / (2 * math.pi * WHEELRADIUS)) * 360
-    motorLeft.run_angle(speed, wheelRotation, then=Stop.HOLD, wait=False)
-    motorRight.run_angle(-speed, wheelRotation, then=Stop.HOLD, wait=True)
+def turnByDegrees(angleDeg, speed=100):
+    updatePose()
+    startAngle = math.degrees(theta)
+    targetAngle = startAngle + angleDeg
 
-def getUpdatedPosition(motorLeft, motorRight, gyro):
+    while True:
+        updatePose()
+        currentAngle = math.degrees(theta)
+        error = (targetAngle - currentAngle + 180) % 360 - 180
+        if abs(error) < 1:
+            break
+
+        if (touchPressed()):
+            break
+        if error > 0:
+            motorLeft.run(-speed)
+            motorRight.run(speed)
+        else:
+            motorLeft.run(speed)
+            motorRight.run(-speed)
+
+        wait(20)
+
+    motorLeft.hold()
+    motorRight.hold()
+    wait(100)
+
+
+def backtrack(distance = 2.5):
+    wait(100)
+    motorLeft.run_angle(GOATED_SPEED, getAngle(-distance), then=Stop.HOLD, wait=False)
+    motorRight.run_angle(GOATED_SPEED, getAngle(-distance), then=Stop.HOLD, wait=True)
+    updatePose()
+
+theta_d = 0
+def updatePose():
     global x, y, theta, totalDistance, prevLeft, prevRight, prevGyro
 
     angleLeft = motorLeft.angle()
     angleRight = motorRight.angle()
-    angleGyro = math.radians(gyro.angle())
+    angleGyro = -math.radians(gyro.angle())
 
     # Wheel distances
     deltaLeft = math.radians(angleLeft - prevLeft) * (WHEELRADIUS)
@@ -108,32 +127,41 @@ def getUpdatedPosition(motorLeft, motorRight, gyro):
 
     # Heading
     deltaTheta = angleGyro - prevGyro
+    
+    # theta, x, y
     theta += deltaTheta
-
-    # x, y
     x += deltaAvg * math.cos(theta)
     y += deltaAvg * math.sin(theta)
-
+    
     # Save for next loop
     prevLeft = angleLeft
     prevRight = angleRight
     prevGyro = angleGyro
 
-    return x, y, theta
+    ev3.screen.clear()
+    ev3.screen.draw_text(0, 0,  "x: " + str(round(x)))
+    ev3.screen.draw_text(0, 30, "y: " + str(round(y)))
+    ev3.screen.draw_text(0, 60, "theta: " + str(round((math.degrees(theta) % 360))))
+    ev3.screen.draw_text(0, 100, "theta_d " + str(theta_d))
+    # ev3.screen.draw_text(0, 130, "facingObjective: " + str(facingObjective))
+    # ev3.screen.draw_text(0, 160, "hitObject: " + str(hitObject))
 
 def onMLine():
     global x, y
-    if (abs((1.25 * x - 62.5) - y) < 5):
+    m = (GOAL_Y - START_Y) / (GOAL_X - START_X)
+    b = START_Y - m * START_X
+
+    if abs((m * x + b) - y) < 10:
         return True
     return False
 
-def dist_to_goal(x, y, goalX=250, goalY=250):
+def distToGoal(x, y, goalX=GOAL_X, goalY=GOAL_Y):
     dx = goalX - x
     dy = goalY - y
     return math.sqrt(dx*dx + dy*dy)
 
-def turnTowardPoint(targetX, targetY, speed=100):
-    global x, y, theta
+def turnTowardPoint(targetX, targetY):
+    global x, y, theta, theta_d
 
     desiredTheta = math.atan2(targetY - y, targetX - x)
     angleError = desiredTheta - theta
@@ -142,160 +170,83 @@ def turnTowardPoint(targetX, targetY, speed=100):
 
     angleDeg = math.degrees(angleError)
 
-    turnRightish(angleDeg, speed)
-    # if angleDeg > 0:
-    #     turnRightish(angleDeg, speed)
-    # else:
-    #     turnRightish(angleDeg, speed)   # this is neg so it would actually go left!
+    theta_d = math.degrees(desiredTheta)
+    turnByDegrees(angleDeg)
+    updatePose()
 
+# def facingObjectiveish(targetX, targetY):
+#     desiredTheta = math.atan2(targetY - y, targetX - x)
+#     angleError = desiredTheta - theta
 
-# Main loop
-while (True):
-    if (not facingObjective):
-        turnTowardPoint(250, 250)
-        facingObjective = True
+#     angleError = (angleError + math.pi) % (2 * math.pi) - math.pi
 
-    if (onMLine() and facingObjective):
-        runMotors(GOATED_SPEED, GOATED_SPEED)
-        if (touchPressed()):
-                LASTHITX = x
-                LASTHITY = y
-                BACKTRACK = -2
-                motorLeft.run_angle(GOATED_SPEED, getAngle(BACKTRACK), then=Stop.HOLD, wait=False)
-                motorRight.run_angle(GOATED_SPEED, getAngle(BACKTRACK), then=Stop.HOLD, wait=True)
-                turnRightish(120)
+#     return abs(math.degrees(angleError)) < 2
+
+# Algorithm
+lastHitX = 0
+lastHitY = 0
+lastDistance = 0
+def main():
+    global x, y, theta, totalDistance, lastHitX, lastHitY, lastDistance, hitObject, facingObjective
+    gyro.reset_angle(math.degrees(-START_THETA))
+    motorLeft.reset_angle(0)
+    motorRight.reset_angle(0)
+
+    while (True):
+        updatePose()
+        # wait(20)
+        # continue
+        if (not hitObject):
+            if (touchPressed()):
+                lastHitX = x
+                lastHitY = y
+                backtrack()
+                turnByDegrees(-90)
                 hitObject = True
-    
-    if hitObject:
-        facingObjective = False
-        TARGET_DISTANCE = 150
-        distance = ultrasonic.distance()
-        if(distance is None):
-            distance = lastDistance
-        error = TARGET_DISTANCE - distance
-        # Avoid freakouts by clamping error
-        # OLD: 70
-        # 2nd old: 120
-        MAX_TURN = 120
-        error = max(-MAX_TURN, min(MAX_TURN, error))
-        turn = error * 0.85
-        runMotors(GOATED_SPEED + turn, GOATED_SPEED - turn)
-        x, y, heading = getUpdatedPosition(motorLeft, motorRight, gyro)
-        ev3.screen.clear()
-        ev3.screen.draw_text(0, 0,  "x: " + str(round(x)))
-        ev3.screen.draw_text(0, 30, "y: " + str(round(y)))
-        ev3.screen.draw_text(0, 60, "theta: " + str(round((math.degrees(heading) % 360))))
-        lastDistance = distance
-        
-        if (touchPressed()): # make sure this is counted in the math
-            BACKTRACK = -2
-            motorLeft.run_angle(GOATED_SPEED, getAngle(BACKTRACK), then=Stop.HOLD, wait=False)
-            motorRight.run_angle(GOATED_SPEED, getAngle(BACKTRACK), then=Stop.HOLD, wait=True)
-            turnRightish(120)
+                continue
 
-        if onMLine() and dist_to_goal(x,y) < dist_to_goal(LASTHITX,LASTHITY):
-            turnTowardPoint(250, 250)
-            facingObjective = True
-            hitObject = False
+            if (not facingObjective):
+                turnTowardPoint(GOAL_X, GOAL_Y)
+                facingObjective = True
 
-    if (not hitObject and not onMLine() and facingObjective):
-        runMotors(GOATED_SPEED, GOATED_SPEED)
-        if (touchPressed()):
-                LASTHITX = x
-                LASTHITY = y
-                BACKTRACK = -2
-                motorLeft.run_angle(GOATED_SPEED, getAngle(BACKTRACK), then=Stop.HOLD, wait=False)
-                motorRight.run_angle(GOATED_SPEED, getAngle(BACKTRACK), then=Stop.HOLD, wait=True)
-                turnRightish(120)
-                hitObject = True   
-    
-    if (250 - x) < 25 and (250 - y) < 25:
-        # FINISH CODE
-        motorLeft.hold()
-        motorRight.hold()
-        ev3.speaker.say('twenty one')
+            if (onMLine() and facingObjective):
+                runMotors(GOATED_SPEED, GOATED_SPEED)
 
-        
+                # facingObjective = onMLine() or facingObjectiveish(250, 250)
+        else:
+            facingObjective = False
+            TARGET_DISTANCE = 150
 
-#########################################################################################
-    # if (currentTask == "APPROACH"):
-    #     if (not taskStarted):
-    #         if (centerButtonPressed()):
-    #             motorLeft.reset_angle(0)
-    #             motorRight.reset_angle(0)
-    #             runMotors(GOATED_SPEED, GOATED_SPEED)
-    #             taskStarted = True
+            # Handle errors
+            distance = ultrasonic.distance()
+            if(distance is None):
+                distance = lastDistance
+            else:
+                lastDistance = distance
 
-    #     else:
-    #         if (touch.pressed()):
-    #             motorLeft.hold()
-    #             motorRight.hold()
+            error = TARGET_DISTANCE - distance
+            # Avoid freakouts by clamping error
+            # OLD: 70
+            MAX_TURN = 120
+            error = max(-MAX_TURN, min(MAX_TURN, error))
+            turn = error * 0.85
+            runMotors(GOATED_SPEED + turn, GOATED_SPEED - turn)
+            
+            # Failsafe
+            if (touchPressed()):
+                motorLeft.hold()
+                motorRight.hold()
+                backtrack(7)
+                turnByDegrees(-90)
+#  
+            if onMLine() and distToGoal(x,y) < distToGoal(lastHitX, lastHitY):
+                turnTowardPoint(GOAL_X, GOAL_Y)
+                facingObjective = True
+                hitObject = False
 
-    #             startDistance = ((motorLeft.angle() +  motorRight.angle()) / 2 / 360) * (2 * math.pi * WHEELRADIUS)
-    #             BACKTRACK = -4
-
-    #             motorLeft.run_angle(GOATED_SPEED, getAngle(BACKTRACK), then=Stop.HOLD, wait=False)
-    #             motorRight.run_angle(GOATED_SPEED, getAngle(BACKTRACK), then=Stop.HOLD, wait=True)
-
-    #             goNext("CIRCLE")
-    # if (currentTask == "CIRCLE"):
-    #     # mm 
-    #     TARGET_DISTANCE = 150
-
-    #     if (not taskStarted):
-    #         # rotate tj and start the task
-    #         turnRightish(120)
-    #         motorLeft.hold()
-    #         motorRight.hold()
-    #         motorLeft.reset_angle(0)
-    #         motorRight.reset_angle(0)
-    #         gyro.reset_angle(0)
-    #         lastDistance = 40
-    #         prevLeft = motorLeft.angle()
-    #         prevRight = motorRight.angle()
-    #         prevGyro = gyro.angle()
-    #         taskStarted = True    
-    #     else:
-    #         distance = ultrasonic.distance()
-    #         if(distance is None):
-    #             distance = lastDistance
-    #         error = TARGET_DISTANCE - distance
-    #         # Avoid freakouts by clamping error
-    #         # OLD: 70
-    #         # 2nd old: 120
-    #         MAX_TURN = 120
-    #         error = max(-MAX_TURN, min(MAX_TURN, error))
-    #         turn = error * 0.85
-    #         runMotors(GOATED_SPEED + turn, GOATED_SPEED - turn)
-    #         x, y, heading = getUpdatedPosition(motorLeft, motorRight, gyro)
-    #         ev3.screen.clear()
-    #         ev3.screen.draw_text(0, 0,  "x: " + str(round(x)))
-    #         ev3.screen.draw_text(0, 30, "y: " + str(round(y)))
-    #         ev3.screen.draw_text(0, 60, "theta: " + str(round((math.degrees(heading) % 360))))
-
-    #         if (touch.pressed()):
-    #             BACKTRACK = -2
-    #             motorLeft.run_angle(GOATED_SPEED, getAngle(BACKTRACK), then=Stop.HOLD, wait=False)
-    #             motorRight.run_angle(GOATED_SPEED, getAngle(BACKTRACK), then=Stop.HOLD, wait=True)
-    #             turnRightish(120)
-
-    #         if math.sqrt((x * x) + (y * y)) < 5 and totalDistance > 15:
-    #             goNext("DONE")
-    #         lastDistance = distance
-    # if (currentTask == "DONE"):
-    #     if (not taskStarted): 
-    #         endDist = startDistance - (ultrasonic.distance() / 10) - 20
-    #         ev3.screen.clear()
-    #         turnRightish(120)
-    #         motorLeft.run_angle(GOATED_SPEED, getAngle(endDist), then=Stop.HOLD, wait=False)
-    #         motorRight.run_angle(GOATED_SPEED, getAngle(endDist), then=Stop.HOLD, wait=True)
-    #         ev3.speaker.beep()
-    #         ev3.speaker.set_speech_options('en', 'm1', 150, 99)
-    #         ev3.screen.print('9 + 10 ?')
-    #         taskStarted = True
-    #     ev3.speaker.say('twenty one')
-    #     wait(750)
-    # wait(5)
-
-    
-
+        if (abs(GOAL_X - x) < 10) and (abs(GOAL_Y - y) < 10):
+            motorLeft.hold()
+            motorRight.hold()
+            ev3.speaker.say('twenty one')
+        wait(20)
+main()
